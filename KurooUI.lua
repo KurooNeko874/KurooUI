@@ -110,7 +110,8 @@ function KurooUI:CreateWindow(config)
     ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
     ScreenGui.ResetOnSpawn   = false
     ScreenGui.IgnoreGuiInset = true
-    ScreenGui.Parent         = playerGui
+    local ok = pcall(function() ScreenGui.Parent = game:GetService("CoreGui") end)
+        if not ok then ScreenGui.Parent = playerGui end
     ScreenGui.DisplayOrder   = 999
 
     -- ──────────────────────────────────────────────────────────
@@ -433,17 +434,12 @@ function KurooUI:CreateWindow(config)
         isVisible = false
         for _, close in ipairs(ddClosers) do close() end
         MainFrame.Visible = false
-        UserInputService.MouseBehavior    = savedMouseBehavior
-        UserInputService.MouseIconEnabled = true
     end
 
     local function showUI()
         isVisible = true
-        savedMouseBehavior = UserInputService.MouseBehavior  -- simpan state game
         MainFrame.Position = UDim2.new(0.5, -sizeW/2, 0.5, -sizeH/2)
         MainFrame.Visible  = true
-        UserInputService.MouseBehavior    = Enum.MouseBehavior.Default
-        UserInputService.MouseIconEnabled = true
     end
 
     -- Tombol ✕ → sembunyikan
