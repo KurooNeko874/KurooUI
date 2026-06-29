@@ -1,6 +1,6 @@
 --[[
 ╔══════════════════════════════════════════════════════════════╗
-║  version: 1.0                                                ║
+║  version: 1.0.1                                              ║
 ║  SUPPORT:                                                    ║
 ║  ──────────────────────────────────────────────────────────  ║
 ║  Discord    : kuroneko4411                                   ║
@@ -111,6 +111,7 @@ function KurooUI:CreateWindow(config)
     ScreenGui.ResetOnSpawn   = false
     ScreenGui.IgnoreGuiInset = true
     ScreenGui.Parent         = playerGui
+    ScreenGui.DisplayOrder   = 999
 
     -- ──────────────────────────────────────────────────────────
     -- [2] MainFrame — jendela utama
@@ -426,17 +427,23 @@ function KurooUI:CreateWindow(config)
     -- [8] Logic: Hide / Show UI
     -- ──────────────────────────────────────────────────────────
     local ddClosers = {}
+    local savedMouseBehavior = Enum.MouseBehavior.Default
 
     local function hideUI()
         isVisible = false
         for _, close in ipairs(ddClosers) do close() end
         MainFrame.Visible = false
+        UserInputService.MouseBehavior    = savedMouseBehavior
+        UserInputService.MouseIconEnabled = true
     end
 
     local function showUI()
         isVisible = true
+        savedMouseBehavior = UserInputService.MouseBehavior  -- simpan state game
         MainFrame.Position = UDim2.new(0.5, -sizeW/2, 0.5, -sizeH/2)
-        MainFrame.Visible = true
+        MainFrame.Visible  = true
+        UserInputService.MouseBehavior    = Enum.MouseBehavior.Default
+        UserInputService.MouseIconEnabled = true
     end
 
     -- Tombol ✕ → sembunyikan
@@ -1023,13 +1030,44 @@ function KurooUI:CreateWindow(config)
                 DDList.Visible          = false
                 DDList.ClipsDescendants = false
                 DDList.ZIndex           = 30
-                DDList.Parent           = DDFrame
+                DDList.Parent           = ScreenGui
                 Corner(DDList, 6)
                 Stroke(DDList, 1.5, C.Neon, 0)
                 Pad(DDList, 4, 4, 4, 4)
+
+                local DetectorBtn = Instance.new("TextButton")
+                DetectorBtn.Size                   = UDim2.new(1, 0, 1, 0)
+                DetectorBtn.BackgroundTransparency = 1
+                DetectorBtn.Text                   = ""
+                DetectorBtn.ZIndex                 = 29
+                DetectorBtn.Visible                = false
+                DetectorBtn.Parent                 = ScreenGui
+
                 table.insert(ddClosers, function()
-                    isOpen         = false
-                    DDList.Visible = false
+                    isOpen                  = false
+                    DDList.Visible          = false
+                    DetectorBtn.Visible     = false
+                    Tween(DDBtnStroke, { Color = C.NeonDim }, 0.15)
+                end)
+
+                local DDCloseBar = Instance.new("TextButton")
+                DDCloseBar.Size             = UDim2.new(1, 0, 0, 24)
+                DDCloseBar.BackgroundColor3 = C.Header
+                DDCloseBar.Text             = "✕  Tutup"
+                DDCloseBar.TextColor3       = C.TextSub
+                DDCloseBar.TextSize         = 11
+                DDCloseBar.Font             = Enum.Font.GothamSemibold
+                DDCloseBar.TextXAlignment   = Enum.TextXAlignment.Right
+                DDCloseBar.BorderSizePixel  = 0
+                DDCloseBar.ZIndex           = 32
+                DDCloseBar.Parent           = DDList
+                Corner(DDCloseBar, 4)
+                Pad(DDCloseBar, 0, 6, 0, 6)
+
+                DDCloseBar.MouseButton1Click:Connect(function()
+                    isOpen              = false
+                    DDList.Visible      = false
+                    DetectorBtn.Visible = false
                     Tween(DDBtnStroke, { Color = C.NeonDim }, 0.15)
                 end)
 
@@ -1044,6 +1082,8 @@ function KurooUI:CreateWindow(config)
                 DDScroll.AutomaticCanvasSize  = Enum.AutomaticSize.Y
                 DDScroll.ZIndex               = 31
                 DDScroll.Parent               = DDList
+                DDScroll.Position = UDim2.new(0, 0, 0, 28)
+                DDScroll.Size     = UDim2.new(1, 0, 1, -28)
 
                 local DDSLayout = Instance.new("UIListLayout")
                 DDSLayout.Padding   = UDim.new(0, 2)
@@ -1098,9 +1138,23 @@ function KurooUI:CreateWindow(config)
 
                 -- Toggle list saat klik DDBtn
                 DDBtn.MouseButton1Click:Connect(function()
-                    isOpen         = not isOpen
+                    isOpen = not isOpen
+                    DetectorBtn.Visible = isOpen
+                    if isOpen then
+                        local abs  = DDBtn.AbsolutePosition
+                        local size = DDBtn.AbsoluteSize
+                        DDList.Position = UDim2.new(0, abs.X, 0, abs.Y + size.Y + 4)
+                        DDList.Size     = UDim2.new(0, size.X, 0, listH)
+                    end
                     DDList.Visible = isOpen
                     Tween(DDBtnStroke, { Color = isOpen and C.Neon or C.NeonDim }, 0.15)
+                end)
+
+                DetectorBtn.MouseButton1Click:Connect(function()
+                    isOpen             = false
+                    DDList.Visible     = false
+                    DetectorBtn.Visible = false
+                    Tween(DDBtnStroke, { Color = C.NeonDim }, 0.15)
                 end)
 
                 local DDAPI = {}
