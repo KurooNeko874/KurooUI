@@ -22,12 +22,15 @@ local Win = UI:CreateWindow({
     Title   = "Dev Tools",   -- window title
     W       = 400,           -- width  (default: 400)
     H       = 350,           -- height (default: 350)
-    Logo    = "rbxassetid://YOUR_ID",  -- optional logo beside title
+    Icon    = "rbxassetid://YOUR_ID",  -- optional icon beside title
+    Theme   = "Cyan",        -- theme name (see Themes section)
+    HideKey = Enum.KeyCode.K, -- default hide/show keybind
 })
 ```
 
 > Press the **×** button or the configured keybind to hide/show the UI.
 > The keybind can be changed via the **≡** menu (type the key name e.g. `F3`, `RightShift`, `k`).
+> Hide/show now animates with a smooth shrink-to-center transition.
 
 ---
 
@@ -83,9 +86,9 @@ Sec:AddSlider({
 })
 ```
 
-### TextInput
+### Input
 ```lua
-Sec:AddTextInput({
+Sec:AddInput({
     Name        = "Username",
     Placeholder = "Enter name...",
     Callback    = function(text)
@@ -110,7 +113,7 @@ DD:Get()        -- returns current value
 DD:Set("High")  -- set value programmatically
 ```
 
-> Dropdown stays open until clicked again or UI is hidden.
+> Dropdown stays open until clicked again or you click outside it.
 
 ### Keybind
 ```lua
@@ -125,6 +128,57 @@ local KB = Sec:AddKeybind({
 KB:Get()  -- returns current KeyCode
 ```
 
+### ColorPicker
+```lua
+local CP = Sec:AddColorPicker({
+    Name     = "ESP Color",
+    Color    = Color3.fromRGB(255, 0, 0),
+    Callback = function(color)
+        print("color:", color)
+    end,
+})
+
+CP:Get()                              -- returns current Color3
+CP:Set(Color3.fromRGB(0, 255, 0))     -- set value programmatically
+```
+
+---
+
+## Themes
+
+```lua
+Win:SetTheme("Ruby")  -- switch preset theme anytime
+```
+
+| Theme | Style |
+|---|---|
+| `Cyan` | Navy + cyan outline |
+| `Yellow` | Black + yellow accent |
+| `Emerald` | Light green |
+| `Ruby` | Light red / bright red |
+| `Bloody` | Dark red / blood red |
+| `Darkness` | Dark purple |
+| `Sakura` | Soft pink |
+| `Solar` | Dark brown + burnt orange |
+| `Frost` | Light blue |
+| `Toxic` | Dark green + neon green |
+| `Monochrome` | Neutral gray |
+
+Custom override:
+```lua
+Win:ModifyTheme({ BG = Color3.fromRGB(0, 0, 0) })
+```
+
+---
+
+## Window Methods
+
+```lua
+Win:SetTheme("Toxic")
+Win:ModifyTheme({ Neon = Color3.fromRGB(255, 0, 0) })
+Win:Destroy()  -- cleanup, disconnects all connections
+```
+
 ---
 
 ## Full Example
@@ -136,6 +190,7 @@ local Win = UI:CreateWindow({
     Title = "Dev Tools",
     W     = 450,
     H     = 380,
+    Theme = "Cyan",
 })
 
 local Tab = Win:AddTab({ Name = "Main" })
