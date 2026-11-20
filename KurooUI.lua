@@ -1,6 +1,6 @@
 --[[
 ╔══════════════════════════════════════════════════════════════╗
-║  version: 1.1.2                                              ║
+║  version: 1.1.3                                              ║
 ║  SUPPORT:                                                    ║
 ║  ──────────────────────────────────────────────────────────  ║
 ║  Discord    : kuroneko4411                                   ║
@@ -302,9 +302,9 @@ local THEMES = {
 	},
 }
 
--- Palette aktif (default Cyan). Diisi ulang di dalam CreateWindow
--- sesuai config.Theme, lalu semua elemen dibuat memakai C ini.
-local C = THEMES.Cyan
+-- Palette fallback untuk helper global; setiap window punya salinan
+-- tabel warna `C` sendiri di dalam CreateWindow agar tidak saling timpa.
+local DEFAULT_THEME = THEMES.Cyan
 
 -- ================================================================
 -- HELPERS
@@ -330,7 +330,7 @@ end
 
 local function stroke(color, thickness, transparency)
 	return new("UIStroke", {
-		Color = color or C.NeonDim,
+		Color = color or DEFAULT_THEME.NeonDim,
 		Thickness = thickness or 1,
 		Transparency = transparency or 0,
 	})
@@ -383,12 +383,13 @@ local function isPointInGui(guiObject, x, y)
 		and y >= pos.Y and y <= pos.Y + size.Y
 end
 
-local function makeDraggable(frame, dragHandle, connectionsTable)
+local function makeDraggable(frame, dragHandle, connectionsTable, onDragStart)
 	local dragging = false
 	local dragStart, startPos
 
 	local c1 = UserInputService.InputBegan:Connect(function(input, gameProcessed)
 		if gameProcessed then return end -- klik sudah kena tombol lain (mis. Close/Settings)
+		if not frame.Visible then return end
 		if input.UserInputType ~= Enum.UserInputType.MouseButton1
 			and input.UserInputType ~= Enum.UserInputType.Touch then
 			return
@@ -398,6 +399,9 @@ local function makeDraggable(frame, dragHandle, connectionsTable)
 			dragging = true
 			dragStart = Vector2.new(pos.X, pos.Y)
 			startPos = frame.Position
+			if onDragStart then
+				onDragStart()
+			end
 		end
 	end)
 
@@ -527,7 +531,12 @@ function KurooUILib.new()
 			warn("[KurooUI] Theme '" .. tostring(themeName) .. "' tidak ditemukan, pakai 'Cyan'.")
 			themeName = "Cyan"
 		end
-		C = THEMES[themeName]
+		-- Salinan tema lokal per-window supaya preset THEMES tidak ikut berubah
+		-- dan multiple window dengan tema berbeda tidak saling menimpa.
+		local C = {}
+		for k, v in pairs(THEMES[themeName]) do
+			C[k] = v
+		end
 
 		parentScreenGui()
 
@@ -538,7 +547,9 @@ function KurooUILib.new()
 
 		-- Registry untuk cleanup total (FIX #6)
 		local allConnections = {}
-		local themeables = {} -- { instance = ..., prop = "BackgroundColor3", key = "BG" }
+		local themeables = {} -- { inst = ..., prop = "BackgroundColor3", key = "BG" }
+		local themeCallbacks = {} -- callback dinamis untuk elemen stateful (Tab, Toggle, Dropdown, Keybind)
+		local openDropdownClosers = {} -- untuk auto-close dropdown saat window di-drag/hide
 
 		local function trackConn(conn)
 			table.insert(allConnections, conn)
@@ -550,9 +561,20 @@ function KurooUILib.new()
 			return inst
 		end
 
+		local function onThemeChange(fn)
+			table.insert(themeCallbacks, fn)
+		end
+
+		local function closeAllDropdowns()
+			for _, closeFn in ipairs(openDropdownClosers) do
+				closeFn()
+			end
+		end
+
 		-- ============================================================
 		-- MAIN FRAME
 		-- ============================================================
+		local MainStroke = stroke(C.Neon, 5, 0)
 		local MainFrame = new("Frame", {
 			Name = "MainFrame",
 			Parent = ScreenGui,
@@ -561,12 +583,13 @@ function KurooUILib.new()
 			BackgroundColor3 = C.BG,
 			BorderSizePixel = 0,
 			ClipsDescendants = true,
-		}, { corner(8), stroke(C.Neon, 5, 0) })
+		}, { corner(8), MainStroke })
 		themed(MainFrame, "BackgroundColor3", "BG")
+		themed(MainStroke, "Color", "Neon")
 
 		MainFrame.AnchorPoint = Vector2.new(0.5, 0.5)
 		MainFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
-		local CLOSE_ANIM = TweenInfo.new(0.4, Enum.EasingStyle.Exponential)
+		local CLOSE_ANIM = TweenInfo.new(0.35, Enum.EasingStyle.Quart, Enum.EasingDirection.InOut)
 
 		-- Auto-scale di mobile jika ukuran window melebihi layar agar tombol X tetap mudah dijangkau
 		if isMobile then
@@ -696,14 +719,11 @@ function KurooUILib.new()
 		end
 
 		local SettingsBtn = headerButton("≡", C.Neon)
+		themed(SettingsBtn, "TextColor3", "Neon")
 		local CloseBtn   = headerButton("×", Color3.fromRGB(255, 80, 80))
 
-		-- FIX #1 + #8: drag hanya di Header, tapi tombol2 di dalamnya
-		-- otomatis "menang" karena TextButton menyerap InputBegan duluan
-		-- (event tidak bubble ke Header untuk MouseButton1 pada child
-		-- GuiButton), jadi tidak perlu guard tambahan -- namun kita tetap
-		-- pastikan drag pakai listener global yang benar.
-		makeDraggable(MainFrame, Header, allConnections)
+		-- Drag hanya di Header; otomatis tutup dropdown yang terbuka saat mulai geser
+		makeDraggable(MainFrame, Header, allConnections, closeAllDropdowns)
 
 		-- ============================================================
 		-- LEFT PANEL (Tabs)
@@ -739,6 +759,7 @@ function KurooUILib.new()
 			AutomaticCanvasSize = Enum.AutomaticSize.Y,
 			ZIndex = 3,
 		}, { pad(8, 6, 8, 6) })
+		themed(TabScroll, "ScrollBarImageColor3", "Neon")
 		new("UIListLayout", {
 			Parent = TabScroll,
 			SortOrder = Enum.SortOrder.LayoutOrder,
@@ -772,6 +793,7 @@ function KurooUILib.new()
 			ClipsDescendants = true,
 			ZIndex = 3,
 		}, { pad(8, 8, 8, 8) })
+		themed(ContentScroll, "ScrollBarImageColor3", "Neon")
 		new("UIListLayout", {
 			Parent = ContentScroll,
 			SortOrder = Enum.SortOrder.LayoutOrder,
@@ -781,6 +803,7 @@ function KurooUILib.new()
 		-- ============================================================
 		-- SETTINGS PANEL (keybind hide/show UI)
 		-- ============================================================
+		local SettingsStroke = stroke(C.Neon, 1.5, 0)
 		local SettingsPanel = new("Frame", {
 			Parent = MainFrame,
 			Size = UDim2.new(0, 230, 0, 130),
@@ -789,10 +812,11 @@ function KurooUILib.new()
 			BorderSizePixel = 0,
 			Visible = false,
 			ZIndex = 15,
-		}, { corner(8), stroke(C.Neon, 1.5, 0) })
+		}, { corner(8), SettingsStroke })
 		themed(SettingsPanel, "BackgroundColor3", "Panel")
+		themed(SettingsStroke, "Color", "Neon")
 
-		new("TextLabel", {
+		local SettingsTitle = new("TextLabel", {
 			Parent = SettingsPanel,
 			Size = UDim2.new(1, 0, 0, 38),
 			BackgroundTransparency = 1,
@@ -803,8 +827,9 @@ function KurooUILib.new()
 			TextXAlignment = Enum.TextXAlignment.Left,
 			ZIndex = 16,
 		}, { pad(0, 0, 0, 14) })
+		themed(SettingsTitle, "TextColor3", "TextMain")
 
-		new("Frame", {
+		local SettingsDiv = new("Frame", {
 			Parent = SettingsPanel,
 			Size = UDim2.new(1, -16, 0, 1),
 			Position = UDim2.new(0, 8, 0, 38),
@@ -812,6 +837,7 @@ function KurooUILib.new()
 			BorderSizePixel = 0,
 			ZIndex = 16,
 		})
+		themed(SettingsDiv, "BackgroundColor3", "NeonDim")
 
 		local KeyInput = new("TextBox", {
 			Parent = SettingsPanel,
@@ -828,6 +854,9 @@ function KurooUILib.new()
 			ClearTextOnFocus = false,
 			ZIndex = 16,
 		}, { corner(6), pad(0, 8, 0, 8) })
+		themed(KeyInput, "BackgroundColor3", "InputBG")
+		themed(KeyInput, "TextColor3", "TextMain")
+		themed(KeyInput, "PlaceholderColor3", "TextSub")
 
 		local SaveBtn = new("TextButton", {
 			Parent = SettingsPanel,
@@ -841,40 +870,10 @@ function KurooUILib.new()
 			BorderSizePixel = 0,
 			ZIndex = 16,
 		}, { corner(6) })
-		trackConn(SaveBtn.MouseEnter:Connect(function() tween(SaveBtn, QUICK, { BackgroundColor3 = Color3.fromRGB(0, 130, 210) }) end))
+		themed(SaveBtn, "BackgroundColor3", "TabActive")
+		themed(SaveBtn, "TextColor3", "TextMain")
+		trackConn(SaveBtn.MouseEnter:Connect(function() tween(SaveBtn, QUICK, { BackgroundColor3 = C.BtnHover }) end))
 		trackConn(SaveBtn.MouseLeave:Connect(function() tween(SaveBtn, QUICK, { BackgroundColor3 = C.TabActive }) end))
-
-		-- ============================================================
-		-- SPLIT-CLOSE OVERLAY (untuk animasi hide/unhide)
-		-- ============================================================
-		local TopPanel = new("Frame", {
-			Name = "TopPanel",
-			Parent = MainFrame,
-			Size = UDim2.new(1, 0, 0, 0), -- start collapsed
-			Position = UDim2.new(0, 0, 0, 0),
-			BackgroundColor3 = C.BG,
-			BorderSizePixel = 0,
-			ZIndex = 50,
-			Visible = false,
-			ClipsDescendants = true,
-		})
-		themed(TopPanel, "BackgroundColor3", "BG")
-
-		local BottomPanel = new("Frame", {
-			Name = "BottomPanel",
-			Parent = MainFrame,
-			Size = UDim2.new(1, 0, 0, 0), -- start collapsed
-			Position = UDim2.new(0, 0, 1, 0),
-			AnchorPoint = Vector2.new(0, 1),
-			BackgroundColor3 = C.BG,
-			BorderSizePixel = 0,
-			ZIndex = 50,
-			Visible = false,
-			ClipsDescendants = true,
-		})
-		themed(BottomPanel, "BackgroundColor3", "BG")
-
-		local CLOSE_ANIM = TweenInfo.new(0.35, Enum.EasingStyle.Quart, Enum.EasingDirection.InOut)
 
 		-- ============================================================
 		-- MOBILE FLOATING ICON (muncul saat UI di-hide di mobile)
@@ -971,6 +970,8 @@ function KurooUILib.new()
 			if animating or not isVisible then return end
 			animating = true
 			isVisible = false
+			closeAllDropdowns()
+			SettingsPanel.Visible = false
 
 			tween(MainFrame, CLOSE_ANIM, { Size = UDim2.new(0, sizeW, 0, 0) })
 
@@ -1142,6 +1143,7 @@ function KurooUILib.new()
 			table.insert(tabs, tabData)
 
 			local function activateTab()
+				closeAllDropdowns()
 				for _, t in ipairs(tabs) do
 					t.content.Visible = false
 					t.button.BackgroundColor3 = C.TabInact
@@ -1155,6 +1157,16 @@ function KurooUILib.new()
 				activeTab = tabData
 				ContentScroll.CanvasPosition = Vector2.new(0, 0)
 			end
+
+			onThemeChange(function()
+				if not TabBtn.Parent then return end
+				local isAct = (activeTab == tabData)
+				TabBtn.BackgroundColor3 = isAct and C.TabActive or C.TabInact
+				TabBtn.TextColor3 = isAct and C.TabTextActive or C.TabTextInact
+				if tabData.stroke then
+					tabData.stroke.Color = isAct and C.Neon or C.NeonDim
+				end
+			end)
 
 			trackConn(TabBtn.MouseButton1Click:Connect(activateTab))
 			trackConn(TabBtn.MouseEnter:Connect(function()
@@ -1181,6 +1193,7 @@ function KurooUILib.new()
 				local secName = secConfig.Name or "Section"
 				sectionCount = sectionCount + 1
 
+				local SecStroke = stroke(C.NeonDim, 1, 0)
 				local SecFrame = new("Frame", {
 					Parent = TabContent,
 					Size = UDim2.new(1, 0, 0, 0),
@@ -1190,14 +1203,16 @@ function KurooUILib.new()
 					ClipsDescendants = false,
 					LayoutOrder = sectionCount,
 					ZIndex = 4,
-				}, { corner(8), stroke(C.NeonDim, 1, 0), pad(10, 10, 10, 10) })
+				}, { corner(8), SecStroke, pad(10, 10, 10, 10) })
+				themed(SecFrame, "BackgroundColor3", "Panel")
+				themed(SecStroke, "Color", "NeonDim")
 				new("UIListLayout", {
 					Parent = SecFrame,
 					SortOrder = Enum.SortOrder.LayoutOrder,
 					Padding = UDim.new(0, 6),
 				})
 
-				new("TextLabel", {
+				local SecTitle = new("TextLabel", {
 					Parent = SecFrame,
 					Size = UDim2.new(1, 0, 0, 18),
 					BackgroundTransparency = 1,
@@ -1209,7 +1224,8 @@ function KurooUILib.new()
 					LayoutOrder = 0,
 					ZIndex = 5,
 				})
-				new("Frame", {
+				themed(SecTitle, "TextColor3", "TextAccent")
+				local SecDiv = new("Frame", {
 					Parent = SecFrame,
 					Size = UDim2.new(1, 0, 0, 1),
 					BackgroundColor3 = C.NeonDim,
@@ -1217,6 +1233,7 @@ function KurooUILib.new()
 					LayoutOrder = 1,
 					ZIndex = 5,
 				})
+				themed(SecDiv, "BackgroundColor3", "NeonDim")
 
 				local itemOrder = 1
 				local function nextOrder()
@@ -1246,6 +1263,8 @@ function KurooUILib.new()
 						LayoutOrder = nextOrder(),
 						ZIndex = 5,
 					}, { corner(6) })
+					themed(Btn, "BackgroundColor3", "BtnBG")
+					themed(Btn, "TextColor3", "TextMain")
 
 					trackConn(Btn.MouseEnter:Connect(function() tween(Btn, QUICK, { BackgroundColor3 = C.BtnHover }) end))
 					trackConn(Btn.MouseLeave:Connect(function() tween(Btn, QUICK, { BackgroundColor3 = C.BtnBG }) end))
@@ -1274,6 +1293,7 @@ function KurooUILib.new()
 
 					local state = default
 
+					local TogStroke = stroke(C.NeonDim, 1, 0)
 					local TogRow = new("Frame", {
 						Parent = SecFrame,
 						Size = UDim2.new(1, 0, 0, 32),
@@ -1281,31 +1301,41 @@ function KurooUILib.new()
 						BorderSizePixel = 0,
 						LayoutOrder = nextOrder(),
 						ZIndex = 5,
-					}, { corner(6), stroke(C.NeonDim, 1, 0), pad(0, 10, 0, 10) })
+					}, { corner(6), TogStroke, pad(10, 0, 10, 0) })
+					themed(TogRow, "BackgroundColor3", "BtnBG")
+					themed(TogStroke, "Color", "NeonDim")
 
-					new("TextLabel", {
+					local TogLabel = new("TextLabel", {
 						Parent = TogRow,
-						Size = UDim2.new(1, -50, 1, 0),
-						Position = UDim2.new(1, -390, 0.8, -10),
+						Size = UDim2.new(1, -52, 1, 0),
+						Position = UDim2.new(0, 0, 0, 0),
 						BackgroundTransparency = 1,
 						Text = name,
 						TextColor3 = C.TextMain,
 						TextSize = 13,
 						Font = Enum.Font.GothamSemibold,
 						TextXAlignment = Enum.TextXAlignment.Left,
+						TextYAlignment = Enum.TextYAlignment.Center,
 						ZIndex = 6,
 					})
+					themed(TogLabel, "TextColor3", "TextMain")
 
 					local SwBG = new("Frame", {
 						Parent = TogRow,
 						Size = UDim2.new(0, 40, 0, 20),
-						Position = UDim2.new(1, -45, 0.5, -10),
+						Position = UDim2.new(1, -40, 0.5, -10),
 						BackgroundColor3 = state and C.ToggleOn or C.ToggleOff,
 						BorderSizePixel = 0,
 						ZIndex = 6,
 					}, { corner(10) })
-					local SwStroke = stroke(C.NeonDim, 1, 0)
+					local SwStroke = stroke(state and C.Neon or C.NeonDim, 1, 0)
 					SwStroke.Parent = SwBG
+
+					onThemeChange(function()
+						if not SwBG.Parent then return end
+						SwBG.BackgroundColor3 = state and C.ToggleOn or C.ToggleOff
+						SwStroke.Color = state and C.Neon or C.NeonDim
+					end)
 
 					local Knob = new("Frame", {
 						Parent = SwBG,
@@ -1353,6 +1383,7 @@ function KurooUILib.new()
 
 					local curVal = math.clamp(defVal, minVal, maxVal)
 
+					local SlStroke = stroke(C.NeonDim, 1, 0)
 					local SlFrame = new("Frame", {
 						Parent = SecFrame,
 						Size = UDim2.new(1, 0, 0, 50),
@@ -1360,7 +1391,9 @@ function KurooUILib.new()
 						BorderSizePixel = 0,
 						LayoutOrder = nextOrder(),
 						ZIndex = 5,
-					}, { corner(6), stroke(C.NeonDim, 1, 0), pad(7, 10, 7, 10) })
+					}, { corner(6), SlStroke, pad(7, 10, 7, 10) })
+					themed(SlFrame, "BackgroundColor3", "BtnBG")
+					themed(SlStroke, "Color", "NeonDim")
 					new("UIListLayout", {
 						Parent = SlFrame,
 						Padding = UDim.new(0, 5),
@@ -1374,7 +1407,7 @@ function KurooUILib.new()
 						LayoutOrder = 0,
 						ZIndex = 6,
 					})
-					new("TextLabel", {
+					local SlNameLabel = new("TextLabel", {
 						Parent = TopRow,
 						Size = UDim2.new(0.65, 0, 1, 0),
 						BackgroundTransparency = 1,
@@ -1385,6 +1418,7 @@ function KurooUILib.new()
 						TextXAlignment = Enum.TextXAlignment.Left,
 						ZIndex = 6,
 					})
+					themed(SlNameLabel, "TextColor3", "TextMain")
 					local SlValue = new("TextLabel", {
 						Parent = TopRow,
 						Size = UDim2.new(0.35, 0, 1, 0),
@@ -1397,6 +1431,7 @@ function KurooUILib.new()
 						TextXAlignment = Enum.TextXAlignment.Right,
 						ZIndex = 6,
 					})
+					themed(SlValue, "TextColor3", "TextAccent")
 
 					local pct = (curVal - minVal) / (maxVal - minVal)
 					local Track = new("Frame", {
@@ -1407,6 +1442,7 @@ function KurooUILib.new()
 						LayoutOrder = 1,
 						ZIndex = 6,
 					}, { corner(4) })
+					themed(Track, "BackgroundColor3", "ToggleOff")
 					local Fill = new("Frame", {
 						Parent = Track,
 						Size = UDim2.new(pct, 0, 1, 0),
@@ -1414,6 +1450,8 @@ function KurooUILib.new()
 						BorderSizePixel = 0,
 						ZIndex = 7,
 					}, { corner(4) })
+					themed(Fill, "BackgroundColor3", "SliderFill")
+					local SlKnobStroke = stroke(C.Neon, 1.5, 0)
 					local SlKnob = new("Frame", {
 						Parent = Track,
 						Size = UDim2.new(0, 14, 0, 14),
@@ -1421,7 +1459,8 @@ function KurooUILib.new()
 						BackgroundColor3 = Color3.fromRGB(240, 250, 255),
 						BorderSizePixel = 0,
 						ZIndex = 8,
-					}, { corner(7), stroke(C.Neon, 1.5, 0) })
+					}, { corner(7), SlKnobStroke })
+					themed(SlKnobStroke, "Color", "Neon")
 
 					-- FIX poin 4 (v2): sebelumnya Track adalah Frame biasa tanpa
 					-- Active=true, sehingga InputBegan sering tidak konsisten
@@ -1494,6 +1533,7 @@ function KurooUILib.new()
 					local placeholder = cfg.Placeholder or "Ketik di sini..."
 					local callback = cfg.Callback or function() end
 
+					local InStroke = stroke(C.NeonDim, 1, 0)
 					local InFrame = new("Frame", {
 						Parent = SecFrame,
 						Size = UDim2.new(1, 0, 0, 52),
@@ -1501,14 +1541,16 @@ function KurooUILib.new()
 						BorderSizePixel = 0,
 						LayoutOrder = nextOrder(),
 						ZIndex = 5,
-					}, { corner(6), stroke(C.NeonDim, 1, 0), pad(7, 10, 7, 10) })
+					}, { corner(6), InStroke, pad(7, 10, 7, 10) })
+					themed(InFrame, "BackgroundColor3", "BtnBG")
+					themed(InStroke, "Color", "NeonDim")
 					new("UIListLayout", {
 						Parent = InFrame,
 						Padding = UDim.new(0, 4),
 						SortOrder = Enum.SortOrder.LayoutOrder,
 					})
 
-					new("TextLabel", {
+					local InLabel = new("TextLabel", {
 						Parent = InFrame,
 						Size = UDim2.new(1, 0, 0, 14),
 						BackgroundTransparency = 1,
@@ -1520,6 +1562,7 @@ function KurooUILib.new()
 						LayoutOrder = 0,
 						ZIndex = 6,
 					})
+					themed(InLabel, "TextColor3", "TextSub")
 
 					-- Poin 6: placeholder & text textfield sekarang center
 					local InBox = new("TextBox", {
@@ -1539,6 +1582,9 @@ function KurooUILib.new()
 						LayoutOrder = 1,
 						ZIndex = 6,
 					}, { corner(4), pad(0, 6, 0, 6) })
+					themed(InBox, "BackgroundColor3", "InputBG")
+					themed(InBox, "TextColor3", "TextMain")
+					themed(InBox, "PlaceholderColor3", "TextSub")
 
 					trackConn(InBox.FocusLost:Connect(function(enter)
 						if enter then
@@ -1566,6 +1612,7 @@ function KurooUILib.new()
 					local selected = default
 					local isOpen = false
 
+					local DDStroke = stroke(C.NeonDim, 1, 0)
 					local DDFrame = new("Frame", {
 						Parent = SecFrame,
 						Size = UDim2.new(1, 0, 0, 59),
@@ -1574,14 +1621,16 @@ function KurooUILib.new()
 						ClipsDescendants = false,
 						LayoutOrder = nextOrder(),
 						ZIndex = 6,
-					}, { corner(6), stroke(C.NeonDim, 1, 0), pad(7, 10, 7, 10) })
+					}, { corner(6), DDStroke, pad(7, 10, 7, 10) })
+					themed(DDFrame, "BackgroundColor3", "BtnBG")
+					themed(DDStroke, "Color", "NeonDim")
 					new("UIListLayout", {
 						Parent = DDFrame,
 						Padding = UDim.new(0, 4),
 						SortOrder = Enum.SortOrder.LayoutOrder,
 					})
 
-					new("TextLabel", {
+					local DDLabel = new("TextLabel", {
 						Parent = DDFrame,
 						Size = UDim2.new(1, 0, 0, 14),
 						BackgroundTransparency = 1,
@@ -1593,6 +1642,7 @@ function KurooUILib.new()
 						LayoutOrder = 0,
 						ZIndex = 7,
 					})
+					themed(DDLabel, "TextColor3", "TextSub")
 
 					-- Poin 5: padding kiri diperbesar (6 -> 12) supaya teks
 					-- dropdown tidak mepet ke tepi kiri
@@ -1609,6 +1659,8 @@ function KurooUILib.new()
 						LayoutOrder = 1,
 						ZIndex = 7,
 					}, { corner(4), pad(12, 6, 6, 6) })
+					themed(DDBtn, "BackgroundColor3", "InputBG")
+					themed(DDBtn, "TextColor3", "TextMain")
 
 					local Arrow = new("TextLabel", {
 						Parent = DDBtn,
@@ -1622,9 +1674,11 @@ function KurooUILib.new()
 						TextXAlignment = Enum.TextXAlignment.Center,
 						ZIndex = 8,
 					})
+					themed(Arrow, "TextColor3", "TextSub")
 
 					-- List di ScreenGui supaya tidak ke-clip oleh ContentScroll
 					local listH = math.min(#options, 5) * 28 + 8
+					local DDListStroke = stroke(C.Neon, 1.5, 0)
 					local DDList = new("Frame", {
 						Parent = ScreenGui,
 						Size = UDim2.new(0, 100, 0, listH),
@@ -1634,7 +1688,9 @@ function KurooUILib.new()
 						Visible = false,
 						ClipsDescendants = true,
 						ZIndex = 30,
-					}, { corner(6), stroke(C.Neon, 1.5, 0), pad(4, 4, 4, 4) })
+					}, { corner(6), DDListStroke, pad(4, 4, 4, 4) })
+					themed(DDList, "BackgroundColor3", "Panel")
+					themed(DDListStroke, "Color", "Neon")
 
 					-- Detector overlay = satu-satunya cara "klik di luar utk tutup"
 					local DetectorBtn = new("TextButton", {
@@ -1658,21 +1714,25 @@ function KurooUILib.new()
 						AutomaticCanvasSize = Enum.AutomaticSize.Y,
 						ZIndex = 31,
 					})
+					themed(DDScroll, "ScrollBarImageColor3", "Neon")
 					new("UIListLayout", {
 						Parent = DDScroll,
 						Padding = UDim.new(0, 2),
 						SortOrder = Enum.SortOrder.LayoutOrder,
 					})
 
-					-- FIX #3: satu fungsi close terpusat
+					-- FIX #3: satu fungsi close terpusat + terdaftar di openDropdownClosers
 					local function closeDropdown()
+						if not isOpen then return end
 						isOpen = false
 						DDList.Visible = false
 						DetectorBtn.Visible = false
 						tween(Arrow, QUICK, { Rotation = 0 })
 					end
+					table.insert(openDropdownClosers, closeDropdown)
 
 					local function openDropdown()
+						closeAllDropdowns()
 						isOpen = true
 						local abs  = DDBtn.AbsolutePosition
 						local size = DDBtn.AbsoluteSize
@@ -1682,6 +1742,17 @@ function KurooUILib.new()
 						DetectorBtn.Visible = true
 						tween(Arrow, QUICK, { Rotation = 180 })
 					end
+
+					local optButtons = {}
+					onThemeChange(function()
+						for _, item in ipairs(optButtons) do
+							if item.btn.Parent then
+								local sel = (item.opt == selected)
+								item.btn.BackgroundColor3 = sel and C.TabActive or C.BtnBG
+								item.btn.TextColor3 = sel and C.TextMain or C.TextSub
+							end
+						end
+					end)
 
 					for _, opt in ipairs(options) do
 						local isSel = (opt == selected)
@@ -1697,6 +1768,7 @@ function KurooUILib.new()
 							BorderSizePixel = 0,
 							ZIndex = 32,
 						}, { corner(4), pad(0, 6, 0, 8) })
+						table.insert(optButtons, { btn = OptBtn, opt = opt })
 
 						trackConn(OptBtn.MouseEnter:Connect(function()
 							if opt ~= selected then
@@ -1761,6 +1833,7 @@ function KurooUILib.new()
 					local currentBind = default
 					local listening = false
 
+					local KBStroke = stroke(C.NeonDim, 1, 0)
 					local KBFrame = new("Frame", {
 						Parent = SecFrame,
 						Size = UDim2.new(1, 0, 0, 32),
@@ -1768,9 +1841,11 @@ function KurooUILib.new()
 						BorderSizePixel = 0,
 						LayoutOrder = nextOrder(),
 						ZIndex = 5,
-					}, { corner(6), stroke(C.NeonDim, 1, 0), pad(0, 10, 0, 10) })
+					}, { corner(6), KBStroke, pad(10, 0, 10, 0) })
+					themed(KBFrame, "BackgroundColor3", "BtnBG")
+					themed(KBStroke, "Color", "NeonDim")
 
-					new("TextLabel", {
+					local KBLabel = new("TextLabel", {
 						Parent = KBFrame,
 						Size = UDim2.new(1, -100, 1, 0),
 						BackgroundTransparency = 1,
@@ -1781,6 +1856,7 @@ function KurooUILib.new()
 						TextXAlignment = Enum.TextXAlignment.Left,
 						ZIndex = 6,
 					})
+					themed(KBLabel, "TextColor3", "TextMain")
 
 					-- Poin 8: geser tombol keybind lebih ke kiri (jarak dari
 					-- tepi kanan diperbesar dari 10px -> 20px) supaya tidak
@@ -1788,7 +1864,7 @@ function KurooUILib.new()
 					local KBBtn = new("TextButton", {
 						Parent = KBFrame,
 						Size = UDim2.new(0, 70, 0, 22),
-						Position = UDim2.new(1, -90, 0.5, -11),
+						Position = UDim2.new(1, -70, 0.5, -11),
 						BackgroundColor3 = C.InputBG,
 						Text = currentBind.Name,
 						TextColor3 = C.TextAccent,
@@ -1797,6 +1873,12 @@ function KurooUILib.new()
 						BorderSizePixel = 0,
 						ZIndex = 6,
 					}, { corner(4) })
+
+					onThemeChange(function()
+						if not KBBtn.Parent or listening then return end
+						KBBtn.BackgroundColor3 = C.InputBG
+						KBBtn.TextColor3 = C.TextAccent
+					end)
 
 					trackConn(KBBtn.MouseButton1Click:Connect(function()
 						listening = true
@@ -1843,6 +1925,7 @@ function KurooUILib.new()
 					-- Wrapper: SATU frame dengan AutomaticSize + ClipsDescendants
 					-- yang benar2 mengontrol tinggi berdasarkan isinya sendiri,
 					-- bukan absolute position yang bisa "bocor" ke section lain.
+					local CPStroke = stroke(C.NeonDim, 1, 0)
 					local CP = new("Frame", {
 						Parent = SecFrame,
 						Size = UDim2.new(1, 0, 0, 38),
@@ -1850,7 +1933,9 @@ function KurooUILib.new()
 						ClipsDescendants = true,
 						LayoutOrder = nextOrder(),
 						ZIndex = 5,
-					}, { corner(6), stroke(C.NeonDim, 1, 0) })
+					}, { corner(6), CPStroke })
+					themed(CP, "BackgroundColor3", "BtnBG")
+					themed(CPStroke, "Color", "NeonDim")
 
 					local HeaderRow = new("Frame", {
 						Parent = CP,
@@ -1859,7 +1944,7 @@ function KurooUILib.new()
 						ZIndex = 6,
 					})
 
-					new("TextLabel", {
+					local CPLabel = new("TextLabel", {
 						Parent = HeaderRow,
 						BackgroundTransparency = 1,
 						Position = UDim2.new(0, 10, 0, 0),
@@ -1871,6 +1956,7 @@ function KurooUILib.new()
 						TextXAlignment = Enum.TextXAlignment.Left,
 						ZIndex = 6,
 					})
+					themed(CPLabel, "TextColor3", "TextMain")
 
 					local Swatch = new("TextButton", {
 						Parent = HeaderRow,
@@ -1898,7 +1984,7 @@ function KurooUILib.new()
 
 					local function makeChannelSlider(label, value)
 						local row = new("Frame", { Parent = Panel, Size = UDim2.new(1, 0, 0, 26), BackgroundTransparency = 1, ZIndex = 6 })
-						new("TextLabel", {
+						local chLabel = new("TextLabel", {
 							Parent = row,
 							BackgroundTransparency = 1,
 							Size = UDim2.new(0, 20, 1, 0),
@@ -1908,6 +1994,7 @@ function KurooUILib.new()
 							TextSize = 12,
 							ZIndex = 6,
 						})
+						themed(chLabel, "TextColor3", "TextMain")
 						local bar = new("Frame", {
 							Parent = row,
 							Position = UDim2.new(0, 25, 0.5, -4),
@@ -1915,12 +2002,14 @@ function KurooUILib.new()
 							BackgroundColor3 = C.ToggleOff,
 							ZIndex = 6,
 						}, { corner(4) })
+						themed(bar, "BackgroundColor3", "ToggleOff")
 						local fill = new("Frame", {
 							Parent = bar,
 							Size = UDim2.new(value, 0, 1, 0),
 							BackgroundColor3 = C.SliderFill,
 							ZIndex = 7,
 						}, { corner(4) })
+						themed(fill, "BackgroundColor3", "SliderFill")
 						local hitbox = new("TextButton", { Parent = bar, BackgroundTransparency = 1, Size = UDim2.new(1, 0, 1, 0), Text = "", ZIndex = 8 })
 						return bar, fill, hitbox
 					end
@@ -2014,6 +2103,9 @@ function KurooUILib.new()
 					entry.inst[entry.prop] = C[entry.key]
 				end
 			end
+			for _, cb in ipairs(themeCallbacks) do
+				cb()
+			end
 		end
 
 		-- Shortcut: ganti ke preset tema penuh ("Cyan" / "Yellow")
@@ -2044,6 +2136,9 @@ function KurooUILib.new()
 				end
 			end
 			table.clear(allConnections)
+			table.clear(themeables)
+			table.clear(themeCallbacks)
+			table.clear(openDropdownClosers)
 			ScreenGui:Destroy()
 		end
 
@@ -2053,7 +2148,4 @@ function KurooUILib.new()
 	return KurooUI
 end
 
--- Backward-compat: kalau dipakai langsung require(...) tanpa .new(),
--- module ini tetap sediakan satu instance default agar tidak breaking
--- terhadap kode lama yang memanggil `local KurooUI = require(...)`.
 return KurooUILib.new()
