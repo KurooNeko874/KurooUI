@@ -1,6 +1,6 @@
 --[[
 ╔══════════════════════════════════════════════════════════════╗
-║  version: 1.1.0                                              ║
+║  version: 1.1.2                                              ║
 ║  SUPPORT:                                                    ║
 ║  ──────────────────────────────────────────────────────────  ║
 ║  Discord    : kuroneko4411                                   ║
@@ -453,6 +453,15 @@ local function parseKeyCodeInput(text)
 	return nil
 end
 
+-- ----------------------------------------------------------------
+-- MOBILE SUPPORT: Pendeteksi device otomatis
+-- Mengembalikan true untuk HP/Tablet (dan Device Emulator di Studio),
+-- false untuk PC/Laptop (termasuk laptop touchscreen dengan keyboard).
+-- ----------------------------------------------------------------
+local function isMobileDevice()
+	return UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
+end
+
 -- ================================================================
 -- LIBRARY UTAMA
 -- ================================================================
@@ -500,6 +509,15 @@ function KurooUILib.new()
 		local sizeW      = config.W       or 400
 		local sizeH      = config.H       or 350
 		local icon 		 = config.Icon    or nil
+		local mobileIcon = config.MobileIcon or icon
+
+		-- Deteksi device otomatis (opsional: bisa di-override via config.MobileMode = true/false)
+		local isMobile
+		if config.MobileMode ~= nil then
+			isMobile = config.MobileMode
+		else
+			isMobile = isMobileDevice()
+		end
 
 		-- Pilih tema: config.Theme = "Cyan" (default) atau "Yellow"
 		-- Contoh pemakaian di script lain:
@@ -549,6 +567,28 @@ function KurooUILib.new()
 		MainFrame.AnchorPoint = Vector2.new(0.5, 0.5)
 		MainFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
 		local CLOSE_ANIM = TweenInfo.new(0.4, Enum.EasingStyle.Exponential)
+
+		-- Auto-scale di mobile jika ukuran window melebihi layar agar tombol X tetap mudah dijangkau
+		if isMobile then
+			local MainScale = new("UIScale", {
+				Parent = MainFrame,
+				Scale = 1,
+			})
+			local function updateMobileScale()
+				local cam = workspace.CurrentCamera
+				if not cam then return end
+				local vp = cam.ViewportSize
+				if vp.X <= 0 or vp.Y <= 0 then return end
+				local scaleX = (vp.X - 24) / sizeW
+				local scaleY = (vp.Y - 24) / sizeH
+				MainScale.Scale = math.min(1, scaleX, scaleY)
+			end
+			updateMobileScale()
+			local cam = workspace.CurrentCamera
+			if cam then
+				trackConn(cam:GetPropertyChangedSignal("ViewportSize"):Connect(updateMobileScale))
+			end
+		end
 
 		local Shadow = new("ImageLabel", {
 			Parent = MainFrame,
@@ -837,6 +877,92 @@ function KurooUILib.new()
 		local CLOSE_ANIM = TweenInfo.new(0.35, Enum.EasingStyle.Quart, Enum.EasingDirection.InOut)
 
 		-- ============================================================
+		-- MOBILE FLOATING ICON (muncul saat UI di-hide di mobile)
+		-- ============================================================
+		local MOBILE_BTN_SIZE = 52
+		local MOBILE_BTN_ANIM = TweenInfo.new(0.25, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+		local MOBILE_BTN_HIDE = TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+		local MobileToggleBtn = nil
+
+		if isMobile then
+			MobileToggleBtn = new("TextButton", {
+				Name = "MobileToggleBtn",
+				Parent = ScreenGui,
+				AnchorPoint = Vector2.new(0.5, 0.5),
+				Size = UDim2.new(0, MOBILE_BTN_SIZE, 0, MOBILE_BTN_SIZE),
+				Position = UDim2.new(0, 38, 0.5, 0),
+				BackgroundColor3 = C.Header,
+				Text = "",
+				AutoButtonColor = false,
+				BorderSizePixel = 0,
+				Visible = false,
+				Active = true,
+				ZIndex = 100,
+			}, { new("UICorner", { CornerRadius = UDim.new(1, 0) }) })
+			themed(MobileToggleBtn, "BackgroundColor3", "Header")
+
+			local MobileStroke = stroke(C.Neon, 2.5, 0)
+			MobileStroke.Parent = MobileToggleBtn
+			themed(MobileStroke, "Color", "Neon")
+
+			new("ImageLabel", {
+				Parent = MobileToggleBtn,
+				Size = UDim2.new(1, 24, 1, 24),
+				Position = UDim2.new(0, -12, 0, -12),
+				BackgroundTransparency = 1,
+				Image = "rbxassetid://6015897843",
+				ImageColor3 = Color3.fromRGB(0, 0, 0),
+				ImageTransparency = 0.5,
+				ScaleType = Enum.ScaleType.Slice,
+				SliceCenter = Rect.new(49, 49, 450, 450),
+				ZIndex = 99,
+			})
+
+			if mobileIcon then
+				new("ImageLabel", {
+					Parent = MobileToggleBtn,
+					AnchorPoint = Vector2.new(0.5, 0.5),
+					Size = UDim2.new(0.68, 0, 0.68, 0),
+					Position = UDim2.new(0.5, 0, 0.5, 0),
+					BackgroundTransparency = 1,
+					Image = mobileIcon,
+					ScaleType = Enum.ScaleType.Fit,
+					ZIndex = 101,
+				}, { new("UICorner", { CornerRadius = UDim.new(1, 0) }) })
+			else
+				local initial = (title and #title > 0) and title:sub(1, 1):upper() or "K"
+				local MobileLabel = new("TextLabel", {
+					Parent = MobileToggleBtn,
+					Size = UDim2.new(1, 0, 1, 0),
+					BackgroundTransparency = 1,
+					Text = initial,
+					TextColor3 = C.TextMain,
+					TextSize = 22,
+					Font = Enum.Font.GothamBold,
+					ZIndex = 101,
+				})
+				themed(MobileLabel, "TextColor3", "TextMain")
+			end
+		end
+
+		local function showMobileBtn()
+			if not MobileToggleBtn then return end
+			MobileToggleBtn.Size = UDim2.new(0, 0, 0, 0)
+			MobileToggleBtn.Visible = true
+			tween(MobileToggleBtn, MOBILE_BTN_ANIM, { Size = UDim2.new(0, MOBILE_BTN_SIZE, 0, MOBILE_BTN_SIZE) })
+		end
+
+		local function hideMobileBtn()
+			if not MobileToggleBtn or not MobileToggleBtn.Visible then return end
+			tween(MobileToggleBtn, MOBILE_BTN_HIDE, { Size = UDim2.new(0, 0, 0, 0) })
+			task.delay(0.18, function()
+				if isVisible and MobileToggleBtn and MobileToggleBtn.Parent then
+					MobileToggleBtn.Visible = false
+				end
+			end)
+		end
+
+		-- ============================================================
 		-- LOGIC: Hide / Show (animated split)
 		-- ============================================================
 		local animating = false
@@ -852,6 +978,9 @@ function KurooUILib.new()
 				if not isVisible then
 					MainFrame.Visible = false
 					animating = false
+					if isMobile then
+						showMobileBtn()
+					end
 				end
 			end)
 		end
@@ -861,12 +990,74 @@ function KurooUILib.new()
 			animating = true
 			isVisible = true
 
+			if isMobile then
+				hideMobileBtn()
+			end
+
 			MainFrame.Visible = true
 			tween(MainFrame, CLOSE_ANIM, { Size = UDim2.new(0, sizeW, 0, sizeH) })
 
 			task.delay(0.4, function()
 				animating = false
 			end)
+		end
+
+		-- Drag & tap untuk icon bulat mobile (tap = buka UI, geser = pindah posisi icon)
+		if MobileToggleBtn then
+			local btnDragging = false
+			local btnMoved = false
+			local btnDragInput = nil
+			local btnDragStart = nil
+			local btnStartPos = nil
+
+			trackConn(MobileToggleBtn.InputBegan:Connect(function(input)
+				if input.UserInputType == Enum.UserInputType.Touch
+					or input.UserInputType == Enum.UserInputType.MouseButton1 then
+					btnDragging = true
+					btnMoved = false
+					btnDragInput = input
+					btnDragStart = Vector2.new(input.Position.X, input.Position.Y)
+					btnStartPos = MobileToggleBtn.Position
+				end
+			end))
+
+			trackConn(UserInputService.InputChanged:Connect(function(input)
+				if not btnDragging then return end
+				local isValidMove = (btnDragInput and btnDragInput.UserInputType == Enum.UserInputType.Touch and input == btnDragInput)
+					or (btnDragInput and btnDragInput.UserInputType == Enum.UserInputType.MouseButton1 and input.UserInputType == Enum.UserInputType.MouseMovement)
+				if not isValidMove then return end
+
+				local pos = Vector2.new(input.Position.X, input.Position.Y)
+				local delta = pos - btnDragStart
+				if not btnMoved and delta.Magnitude > 8 then
+					btnMoved = true
+				end
+				if btnMoved then
+					local screenSize = ScreenGui.AbsoluteSize
+					if screenSize.X <= 0 or screenSize.Y <= 0 then
+						local cam = workspace.CurrentCamera
+						screenSize = cam and cam.ViewportSize or Vector2.new(1920, 1080)
+					end
+					local half = MOBILE_BTN_SIZE / 2 + 6
+					local newX = math.clamp(btnStartPos.X.Scale * screenSize.X + btnStartPos.X.Offset + delta.X, half, screenSize.X - half)
+					local newY = math.clamp(btnStartPos.Y.Scale * screenSize.Y + btnStartPos.Y.Offset + delta.Y, half, screenSize.Y - half)
+					MobileToggleBtn.Position = UDim2.new(0, newX, 0, newY)
+				end
+			end))
+
+			trackConn(UserInputService.InputEnded:Connect(function(input)
+				if not btnDragging then return end
+				local isValidEnd = (btnDragInput and btnDragInput.UserInputType == Enum.UserInputType.Touch and input == btnDragInput)
+					or (btnDragInput and btnDragInput.UserInputType == Enum.UserInputType.MouseButton1 and input.UserInputType == Enum.UserInputType.MouseButton1)
+				if not isValidEnd then return end
+
+				local wasTap = not btnMoved
+				btnDragging = false
+				btnDragInput = nil
+				if wasTap then
+					showUI()
+				end
+			end))
 		end
 
 		trackConn(CloseBtn.MouseButton1Click:Connect(hideUI))
@@ -1838,6 +2029,10 @@ function KurooUILib.new()
 		-- Jalankan sekali di awal supaya semua elemen yang sudah tercatat
 		-- di `themeables` langsung sinkron dengan tema terpilih.
 		Window:ModifyTheme(C)
+
+		function Window:IsMobile()
+			return isMobile
+		end
 
 		-- ============================================================
 		-- METHOD: Destroy (FIX #6: cleanup total, mencegah leak)
